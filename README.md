@@ -53,6 +53,8 @@ Python 3.9 or higher
 Ollama installed locally
 
 Development Team
+
+
 Sanjaykanth Chandran: Team Lead and Data Analyst. Specialized in forecasting and business insights.
 
 Nivetha Munusamy: Data Analyst. Specialized in data visualization and statistical decision making.
