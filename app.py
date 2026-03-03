@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime
 from fpdf import FPDF
 import base64
-import ollama
+from groq import Groq
 import os
 from fpdf import FPDF
 import plotly.io
@@ -14,10 +14,7 @@ from statsmodels.tsa.arima.model import ARIMA
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from prophet import Prophet
 
-try:
-    from langchain_ollama import OllamaLLM
-except ImportError:
-    st.error("Install the new package: pip install langchain-ollama")
+client = Groq(api_key=st.secrets["GROQ_API_KEY"])
 
 st.set_page_config(page_title=" Predictive Inventory", layout="wide")
 
@@ -207,7 +204,7 @@ page = st.sidebar.radio(
     [
         "Project Overview",
         "Executive Dashboard",
-        "AI Intelligence (Ollama)",
+        "AI Intelligence (Groq)",
         "Team Details"
     ]
 )
@@ -341,15 +338,30 @@ if page == "Executive Dashboard":
     )
     st.markdown('</div>', unsafe_allow_html=True)
 
-elif page == "AI Intelligence (Ollama)":
-    st.title(" Smart Assistant")
+elif page == "AI Intelligence (Groq)": 
+    st.title(" Nila Predictive Business Analyst")
+
     
-    st.markdown("""
-        <div style="background:#1e293b; padding:15px; border-radius:10px; border-left:4px solid #3b82f6; margin-bottom:20px;">
-            <p style="margin:0; font-weight:bold; color:#3b82f6;">System: Gemma 3 (4b) Connected</p>
-            <p style="margin:0; font-size:12px; color:#94a3b8;">I am now linked to your CSV data. I can answer questions about sales, countries, and categories.</p>
-        </div>
-    """, unsafe_allow_html=True)
+    store_data = df.groupby('Store ID').agg({'Sales Amount': 'sum', 'Units Sold': 'sum'}).to_dict('index')
+    
+    
+    seasonal_peak = df.groupby(['Season', 'Product Name'])['Units Sold'].sum().reset_index()
+    seasonal_peak = seasonal_peak.sort_values(['Season', 'Units Sold'], ascending=[True, False]).groupby('Season').head(3).to_dict('records')
+    
+    
+    total_rev = df['Sales Amount'].sum()
+    avg_monthly_sales = total_rev / 24 
+    predicted_next_year = total_rev * 1.15 
+
+    
+    data_snapshot = f"""
+    Knowledge Base:
+    - All Stores Performance: {store_data}
+    - Seasonal Peaks: {seasonal_peak}
+    - Revenue: Total ${total_rev:,.0f}, Avg Monthly ${avg_monthly_sales:,.0f}
+    - Prediction: Estimated 15% increase next year based on historical trends.
+    - Low Stock Alert: Any item with average units sold > 150 per month needs reordering.
+    """
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -358,43 +370,38 @@ elif page == "AI Intelligence (Ollama)":
         role_class = "user-msg" if m["role"] == "user" else "bot-msg"
         st.markdown(f'<div class="{role_class}">{m["content"]}</div>', unsafe_allow_html=True)
 
-    if p := st.chat_input("Ex: Which product category has the highest revenue?"):
+    if p := st.chat_input("Ex: Predict sales for IND Store 01 and tell me what to reorder?"):
         st.session_state.messages.append({"role": "user", "content": p})
         st.markdown(f'<div class="user-msg">{p}</div>', unsafe_allow_html=True)
-
-        context_data = ""
-        
-        if any(word in p.lower() for word in ["country", "india", "thailand", "myanmar", "korea", "united states"]):
-            geo_summary = df.groupby('Country')['Sales Amount'].sum().sort_values(ascending=False).to_dict()
-            context_data += f"Sales by Country: {geo_summary}. "
-        
-        if any(word in p.lower() for word in ["product", "category", "best", "sold", "item"]):
-            top_products = df.groupby('Product Name')['Units Sold'].sum().nlargest(5).to_dict()
-            cat_revenue = df.groupby('Product Category')['Sales Amount'].sum().to_dict()
-            context_data += f"Top 5 Products (Units): {top_products}. Revenue by Category: {cat_revenue}. "
-        
-        total_rev = df['Sales Amount'].sum()
-        total_qty = df['Units Sold'].sum()
-        context_data += f"Global Metrics -> Total Revenue: ${total_rev:,.0f}, Total Units Sold: {total_qty}. "
 
         with st.chat_message("assistant"):
             placeholder = st.empty()
             full_response = ""
             
             try:
-                sys_instruct = f"You are the Nila Stores Data Expert. Use this real-time data: {context_data}. Be concise. "
-                
-                for chunk in ollama.chat(model='gemma3:4b', messages=[{'role': 'user', 'content': sys_instruct + p}], stream=True):
-                    full_response += chunk['message']['content']
-                    placeholder.markdown(full_response + "▌")
+                sys_message = f"""You are an Inventory & Sales Forecaster. Use this: {data_snapshot}.
+                Instructions:
+                1. If asked about a store, look at its specific Sales Amount.
+                2. If asked about 'reorder', suggest items that have high sales units.
+                3. If asked about 'next year' or 'prediction', use the 15% growth logic.
+                4. For 'seasons', mention the specific peak products for that season from the snapshot."""
+
+                stream = client.chat.completions.create(
+                    model="llama-3.3-70b-versatile",
+                    messages=[{"role": "system", "content": sys_message}, {"role": "user", "content": p}],
+                    stream=True,
+                )
+
+                for chunk in stream:
+                    if chunk.choices[0].delta.content:
+                        full_response += chunk.choices[0].delta.content
+                        placeholder.markdown(full_response + "▌")
                 
                 placeholder.markdown(full_response)
                 st.session_state.messages.append({"role": "assistant", "content": full_response})
                 
             except Exception as e:
-                error_txt = " Connection Error: Please ensure 'ollama serve' is running in your terminal."
-                placeholder.error(error_txt)
-                st.session_state.messages.append({"role": "assistant", "content": error_txt})
+                st.error(f"Error: {e}")
         
         st.rerun()
 
@@ -421,7 +428,7 @@ elif page == "Project Overview":
             <h3> Technology Stack</h3>
             <p><b>Backend:</b> Python (Statsmodels, Prophet)<br>
             <b>Dashboard:</b> Streamlit, Plotly, PyDeck<br>
-            <b>Brain:</b> Ollama (Gemma 2)</p>
+            <b>Brain:</b> Groq </p>
         </div>
         <div class="project-card">
             <h3> Business Impact</h3>
