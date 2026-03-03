@@ -3,7 +3,6 @@ pandas
 numpy
 plotly
 fpdf
-ollama
+groq
 statsmodels
 prophet
-langchain-ollama
