@@ -210,32 +210,51 @@ page = st.sidebar.radio(
 )
 
 if page == "Executive Dashboard":
-    st.title(" Nila Stores - Power BI Style Executive Dashboard")
+    st.title(" Executive Dashboard")
 
+   
     with st.container():
         st.markdown('<div class="visual-box">', unsafe_allow_html=True)
         s1, s2, s3, s4, s5 = st.columns(5)
-        with s1: 
-            country_list = ["All"] + sorted(df['Country'].unique().tolist())
-            country = st.selectbox("Country", country_list)
+        
+        with s1:
+            country = st.selectbox("Country", ["All"] + sorted(df['Country'].unique().tolist()))
+        
         with s2:
-            store_options = df[df['Country'] == country]['Store ID'].unique().tolist() if country != "All" else df['Store ID'].unique().tolist()
-            store = st.selectbox("Store", ["All"] + sorted(store_options))
-        with s3: 
-            category = st.selectbox("Category", ["All"] + sorted(df['Product Category'].unique().tolist()))
-        with s4: 
-            product = st.selectbox("Product", ["All"] + sorted(df['Product Name'].unique().tolist()))
-        with s5: 
-            dates = st.date_input("Period", [df['Date'].min(), df['Date'].max()])
+            
+            store_df = df if country == "All" else df[df['Country'] == country]
+            store = st.selectbox("Store", ["All"] + sorted(store_df['Store ID'].unique().tolist()))
+        
+        with s3:
+            
+            cat_df = store_df if store == "All" else store_df[store_df['Store ID'] == store]
+            category = st.selectbox("Category", ["All"] + sorted(cat_df['Product Category'].unique().tolist()))
+        
+        with s4:
+            
+            prod_df = cat_df if category == "All" else cat_df[cat_df['Product Category'] == category]
+            product = st.selectbox("Product", ["All"] + sorted(prod_df['Product Name'].unique().tolist()))
+        
+        with s5:
+            
+            min_csv = df['Date'].min().date()
+            max_csv = df['Date'].max().date()
+            dates = st.date_input("Period", [min_csv, max_csv], min_value=min_csv, max_value=max_csv)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    mask = (df['Date'].dt.date >= dates[0]) & (df['Date'].dt.date <= dates[1])
+    
+    if len(dates) == 2:
+        mask = (df['Date'].dt.date >= dates[0]) & (df['Date'].dt.date <= dates[1])
+    else:
+        mask = (df['Date'].dt.date >= dates[0])
+
     if country != "All": mask &= (df['Country'] == country)
     if store != "All": mask &= (df['Store ID'] == store)
     if category != "All": mask &= (df['Product Category'] == category)
     if product != "All": mask &= (df['Product Name'] == product)
     
     f_df = df[mask].sort_values('Date')
+
 
     k1, k2, k3, k4 = st.columns(4)
     total_sales = f_df["Sales Amount"].sum()
@@ -245,53 +264,58 @@ if page == "Executive Dashboard":
     
     with k1: st.markdown(f'<div class="kpi-card"><p class="kpi-label">Total Revenue</p><p class="kpi-value">${total_sales:,.0f}</p></div>', unsafe_allow_html=True)
     with k2: st.markdown(f'<div class="kpi-card"><p class="kpi-label">Units Volume</p><p class="kpi-value">{units_sold:,}</p></div>', unsafe_allow_html=True)
-    with k3: st.markdown(f'<div class="kpi-card"><p class="kpi-label">Target Demand (Next Mo)</p><p class="kpi-value">{forecast_kpi:,}</p></div>', unsafe_allow_html=True)
+    with k3: st.markdown(f'<div class="kpi-card"><p class="kpi-label">Target Demand </p><p class="kpi-value">{forecast_kpi:,}</p></div>', unsafe_allow_html=True)
     with k4: 
         risk = "CRITICAL" if forecast_kpi > 500 else "STABLE"
         color = "#F85149" if risk == "CRITICAL" else "#3FB950"
         st.markdown(f'<div class="kpi-card"><p class="kpi-label">Inventory Risk</p><p class="kpi-value" style="color:{color}">{risk}</p></div>', unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns([1.2, 1.2, 1.2])
+   
+    c1, c2, c3 = st.columns([1.2, 2, 1.2])
     
     with c1: 
         st.markdown('<div class="visual-box"><div class="visual-title">Global Sales Map</div>', unsafe_allow_html=True)
         geo = f_df.groupby('Country')['Sales Amount'].sum().reset_index()
         fig_globe = go.Figure(go.Choropleth(locations=geo['Country'], locationmode='country names', z=geo['Sales Amount'], colorscale='YlGnBu', showscale=False))
-        fig_globe.update_geos(projection_type="orthographic", bgcolor="rgba(0,0,0,0)", showocean=True, oceancolor="#0B0E14", showland=True, landcolor="#161B22")
+        fig_globe.update_geos(projection_type="orthographic", bgcolor="rgba(0,0,0,0)")
         fig_globe.update_layout(height=300, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig_globe, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
     with c2: 
         st.markdown('<div class="visual-box"><div class="visual-title">30-Month Forecasting Comparison</div>', unsafe_allow_html=True)
-        
         ts = f_df.set_index('Date').resample('MS')['Sales Amount'].sum().asfreq('MS').fillna(0)
-        
         fig_line = go.Figure()
         fig_line.add_trace(go.Scatter(x=ts.index, y=ts.values, name="Actual Sales", line=dict(color='#58A6FF', width=3)))
         
+        forecast_results = [] 
+
         if len(ts) > 5:
             f_periods = 30
             f_dates = pd.date_range(ts.index.max() + pd.DateOffset(months=1), periods=f_periods, freq='MS')
             
             try:
                 arima_m = ARIMA(ts, order=(1,1,1)).fit()
-                fig_line.add_trace(go.Scatter(x=f_dates, y=arima_m.forecast(f_periods), name="ARIMA", line=dict(color='#BC8CFF', dash='dash')))
+                p = arima_m.forecast(f_periods)
+                fig_line.add_trace(go.Scatter(x=f_dates, y=p, name="ARIMA", line=dict(color='#BC8CFF', dash='dash')))
+                for d, v in zip(f_dates, p): forecast_results.append({"Forecast_Date": d.date(), "Model": "ARIMA", "Predicted_Revenue": round(v, 2)})
             except: pass
 
             try:
                 sarima_m = SARIMAX(ts, order=(1,1,1), seasonal_order=(0,1,1,12)).fit(disp=False)
-                fig_line.add_trace(go.Scatter(x=f_dates, y=sarima_m.forecast(f_periods), name="SARIMAX", line=dict(color='#3FB950', width=2)))
+                p = sarima_m.forecast(f_periods)
+                fig_line.add_trace(go.Scatter(x=f_dates, y=p, name="SARIMAX", line=dict(color='#3FB950', width=2)))
+                for d, v in zip(f_dates, p): forecast_results.append({"Forecast_Date": d.date(), "Model": "SARIMAX", "Predicted_Revenue": round(v, 2)})
             except: pass
 
-            if Prophet:
-                try:
-                    p_df = ts.reset_index().rename(columns={'Date': 'ds', 'Sales Amount': 'y'})
-                    m = Prophet(yearly_seasonality='auto', weekly_seasonality=False, daily_seasonality=False)
-                    m.fit(p_df)
-                    p_fc = m.predict(m.make_future_dataframe(periods=f_periods, freq='MS')).tail(f_periods)
-                    fig_line.add_trace(go.Scatter(x=p_fc['ds'], y=p_fc['yhat'], name="Prophet", line=dict(color='#F85149', width=2)))
-                except: pass
+            try:
+                p_df = ts.reset_index().rename(columns={'Date': 'ds', 'Sales Amount': 'y'})
+                m = Prophet(yearly_seasonality='auto', weekly_seasonality=False, daily_seasonality=False)
+                m.fit(p_df)
+                p_fc = m.predict(m.make_future_dataframe(periods=f_periods, freq='MS')).tail(f_periods)
+                fig_line.add_trace(go.Scatter(x=p_fc['ds'], y=p_fc['yhat'], name="Prophet", line=dict(color='#F85149', width=2)))
+                for d, v in zip(p_fc['ds'], p_fc['yhat']): forecast_results.append({"Forecast_Date": d.date(), "Model": "Prophet", "Predicted_Revenue": round(v, 2)})
+            except: pass
 
         fig_line.update_layout(height=300, margin=dict(l=0,r=0,t=10,b=0), template="plotly_dark", paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig_line, use_container_width=True)
@@ -305,6 +329,7 @@ if page == "Executive Dashboard":
         st.plotly_chart(fig_col, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+    
     b1, b2, b3 = st.columns([1.2, 1, 1])
     with b1: 
         st.markdown('<div class="visual-box"><div class="visual-title">Top 5 Products</div>', unsafe_allow_html=True)
@@ -328,14 +353,21 @@ if page == "Executive Dashboard":
         st.plotly_chart(fig_don, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
+    
     st.markdown('<div class="visual-box" style="text-align:center;">', unsafe_allow_html=True)
-    st.download_button(
-        label=" Download Procurement & Forecast Data",
-        data=f_df.to_csv(index=False).encode('utf-8'),
-        file_name=f'Nila_Executive_Report_{country}.csv',
-        mime='text/csv',
-        use_container_width=True
-    )
+    if forecast_results:
+        
+        f_csv = pd.DataFrame(forecast_results).pivot(index='Forecast_Date', columns='Model', values='Predicted_Revenue').reset_index()
+        st.write("###  30-Month Future Revenue Forecast")
+        st.download_button(
+            label="Download Forecast Report (CSV)",
+            data=f_csv.to_csv(index=False).encode('utf-8'),
+            file_name=f'Nila_Forecast_{store}_{datetime.now().strftime("%Y%m%d")}.csv',
+            mime='text/csv',
+            use_container_width=True
+        )
+    else:
+        st.info("Select filters to generate forecast download")
     st.markdown('</div>', unsafe_allow_html=True)
 
 elif page == "AI Intelligence (Groq)": 
